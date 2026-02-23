@@ -8,14 +8,15 @@ from sklearn.preprocessing import LabelEncoder
 # =========================
 # PATH CONFIG
 # =========================
-DATA_PATH = Path("dataset/indian_places.xlsx")
+DATA_PATH = Path("dataset/comprehensive_tourist_places_india_v19.csv")
 MODEL_PATH = Path("models/xgb_ranker.pkl")
 
 # =========================
 # LOAD DATA
 # =========================
 print("Loading dataset...")
-df = pd.read_excel(DATA_PATH)
+# df = pd.read_excel(DATA_PATH)
+df = pd.read_csv(DATA_PATH)
 
 print(f"Rows loaded: {len(df)}")
 

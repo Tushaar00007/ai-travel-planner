@@ -53,5 +53,7 @@ if __name__ == "__main__":
     for day, places in plan.items():
         print(day)
         for p in places:
+            # Updated to include the Google Maps link
             print(f"  - {p['place_name']} ({p['visit_time']} hrs)")
+            print(f"    Map: {p.get('map_link', 'No link available')}")
         print()

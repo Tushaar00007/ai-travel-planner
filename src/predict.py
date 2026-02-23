@@ -7,7 +7,7 @@ from pathlib import Path
 # PATH CONFIG
 # =========================
 MODEL_PATH = Path("models/xgb_ranker.pkl")
-DATA_PATH = Path("dataset/indian_places.xlsx")
+DATA_PATH = Path("dataset/comprehensive_tourist_places_india_v19.csv")
 
 # =========================
 # LOAD MODEL (once)
@@ -27,7 +27,7 @@ le_sig = label_encoders["significance"]
 # LOAD DATASET
 # =========================
 def load_data():
-    df = pd.read_excel(DATA_PATH)
+    df = pd.read_csv(DATA_PATH)
 
     df = df.rename(columns={
         "City": "city",
@@ -38,7 +38,8 @@ def load_data():
         "Google review rating": "rating",
         "Number of google review in lakhs": "review_count",
         "time needed to visit in hrs": "visit_time",
-        "Entrance Fee in INR": "fee"
+        "Entrance Fee in INR": "fee",
+        "Maps": "map_link" # Mapped the maps column
     })
 
     df["rating"] = df["rating"].fillna(df["rating"].mean())
@@ -99,8 +100,9 @@ def get_ranked_places(city_name: str, top_k: int = 10):
     # Sort by ML score
     city_df = city_df.sort_values(by="ml_score", ascending=False)
 
+    # ADDED 'map_link' to the results slice here
     results = city_df.head(top_k)[
-        ["place_name", "rating", "visit_time", "ml_score"]
+        ["place_name", "rating", "visit_time", "ml_score", "map_link"]
     ]
 
     return results.to_dict(orient="records")
@@ -117,7 +119,9 @@ if __name__ == "__main__":
     print(f"\nTop places in {city}:\n")
 
     for p in places:
+        # Added the map link to the print output
         print(
             f"{p['place_name']} | Rating: {p['rating']} | "
-            f"Time: {p['visit_time']} hrs | Score: {round(p['ml_score'], 3)}"
+            f"Time: {p['visit_time']} hrs | Score: {round(p['ml_score'], 3)}\n"
+            f"  Map: {p['map_link']}\n"
         )
