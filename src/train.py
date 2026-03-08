@@ -5,116 +5,92 @@ from pathlib import Path
 from xgboost import XGBRegressor
 from sklearn.preprocessing import LabelEncoder
 
-# =========================
-# PATH CONFIG
-# =========================
-DATA_PATH = Path("dataset/comprehensive_tourist_places_india_v19.csv")
-MODEL_PATH = Path("models/xgb_ranker.pkl")
+BASE_DIR = Path(__file__).resolve().parent.parent
 
-# =========================
-# LOAD DATA
-# =========================
-print("Loading dataset...")
-# df = pd.read_excel(DATA_PATH)
+DATA_PATH = BASE_DIR / "dataset/cleaned_pan_india_tourism_dataset_updated.csv"
+MODEL_PATH = BASE_DIR / "models/xgb_ranker.pkl"
+
 df = pd.read_csv(DATA_PATH)
 
-print(f"Rows loaded: {len(df)}")
-
-# =========================
-# CLEAN COLUMNS
-# =========================
-
-# Rename columns for easier use (adjust if names differ)
 df = df.rename(columns={
     "City": "city",
     "State": "state",
     "Name": "place_name",
     "Type": "type",
-    "Significance": "significance",
     "Google review rating": "rating",
-    "Number of google review in lakhs": "review_count",
     "time needed to visit in hrs": "visit_time",
-    "Entrance Fee in INR": "fee"
+    "Entrance Fee in INR": "fee",
+    "Budget Level": "budget",
+    "Nightlife Spot": "nightlife",
+    "Nightlife Score (0-10)": "nightlife_score",
+    "Is_Shopping": "is_shopping",
+    "Is_Beach": "is_beach",
+    "Adventure_Available": "adventure_available",
+    "Avg_Adventure_Base_Price": "adventure_price",
+    "Famous Market": "famous_market",
+    "Famous Restaurant": "famous_restaurant",
+    "Nearest Airport": "airport",
+    "Major Railway Station": "railway",
+    "Food Specialty": "food_specialty",
+    "Maps": "map_link"
 })
 
-# Fill missing values
 df["rating"] = df["rating"].fillna(df["rating"].mean())
-df["review_count"] = df["review_count"].fillna(0)
 df["visit_time"] = df["visit_time"].fillna(df["visit_time"].median())
-df["significance"] = df["significance"].fillna("Local")
+df["adventure_price"] = df["adventure_price"].fillna(0)
+df["nightlife_score"] = df["nightlife_score"].fillna(0)
 
-# Convert review count to numeric log scale
-df["log_reviews"] = np.log1p(df["review_count"])
+df["log_rating"] = np.log1p(df["rating"])
 
-# =========================
-# ENCODE CATEGORICAL DATA
-# =========================
-
-le_city = LabelEncoder()
-df["city_encoded"] = le_city.fit_transform(df["city"].astype(str))
-
-le_type = LabelEncoder()
-df["type_encoded"] = le_type.fit_transform(df["type"].astype(str))
-
-le_sig = LabelEncoder()
-df["sig_encoded"] = le_sig.fit_transform(df["significance"].astype(str))
-
-# =========================
-# CREATE SYNTHETIC TARGET
-# =========================
-# This simulates "how good a place is"
-
-df["target_score"] = (
-    df["rating"] * 0.6 +
-    df["log_reviews"] * 0.3 +
-    (1 / (df["visit_time"] + 1)) * 0.1
+df["market_score"] = df["famous_market"].fillna("").apply(
+    lambda x: len(str(x).split(",")) if str(x).strip() else 0
 )
 
-# =========================
-# SELECT FEATURES
-# =========================
+encoders = {}
+
+for col in [
+    "city","state","type","budget",
+    "nightlife","is_shopping","is_beach","adventure_available"
+]:
+    le = LabelEncoder()
+    df[col+"_encoded"] = le.fit_transform(df[col].astype(str))
+    encoders[col] = le
+
+df["target_score"] = (
+    df["rating"] * 0.35 +
+    df["nightlife_score"] * 0.2 +
+    df["market_score"] * 0.15 +
+    df["log_rating"] * 0.15 +
+    (df["visit_time"] / df["visit_time"].max()) * 0.15
+)
+
 features = [
-    "city_encoded",
-    "type_encoded",
-    "sig_encoded",
-    "rating",
-    "log_reviews",
-    "visit_time"
+    "city_encoded","state_encoded",
+    "type_encoded","budget_encoded",
+    "nightlife_encoded","is_shopping_encoded",
+    "is_beach_encoded","adventure_available_encoded",
+    "rating","nightlife_score","market_score","visit_time"
 ]
 
 X = df[features]
 y = df["target_score"]
 
-# =========================
-# TRAIN MODEL
-# =========================
-print("Training XGBoost model...")
-
 model = XGBRegressor(
-    n_estimators=200,
-    max_depth=6,
-    learning_rate=0.05,
-    subsample=0.8,
-    colsample_bytree=0.8,
+    n_estimators=400,
+    max_depth=7,
+    learning_rate=0.04,
+    subsample=0.85,
     random_state=42
 )
 
 model.fit(X, y)
 
-# =========================
-# SAVE MODEL
-# =========================
 MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 joblib.dump({
     "model": model,
-    "label_encoders": {
-        "city": le_city,
-        "type": le_type,
-        "significance": le_sig
-    },
+    "label_encoders": encoders,
     "features": features
 }, MODEL_PATH)
 
-print(f"Model saved at: {MODEL_PATH}")
-print("Training complete!")
+print("Model saved successfully.")

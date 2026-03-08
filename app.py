@@ -1,59 +1,173 @@
 import streamlit as st
-import pandas as pd  # <--- Added this required import!
 import sys
 import os
+from datetime import date
+import pandas as pd
 
-# Add the src folder to Python's path so it can find your backend scripts
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+# --------------------------------------------------
+# PROJECT STRUCTURE FIX
+# --------------------------------------------------
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
-from itinerary import build_itinerary
+from itinerary import build_pro_itinerary
+from hotels import get_hotels
+from predict import get_ranked_places
 
-# --- WEB APP UI ---
-st.set_page_config(page_title="AI Travel Planner", page_icon="🗺️")
+# --------------------------------------------------
+# PAGE CONFIG
+# --------------------------------------------------
+st.set_page_config(
+    page_title="AI Travel Researcher PRO",
+    page_icon="🗺️",
+    layout="wide"
+)
 
-st.title("🗺️ AI Travel Itinerary Planner")
-st.markdown("Plan your next trip to India with machine learning-powered recommendations!")
+st.title("🗺️ AI Travel Researcher PRO")
 
-# User Inputs
-col1, col2, col3 = st.columns(3)
-with col1:
-    city = st.text_input("Enter City:", value="Jaipur", placeholder="e.g., Mumbai, Delhi, Jaipur")
-with col2:
-    days = st.number_input("Number of Days:", min_value=1, max_value=14, value=2)
-with col3:
-    hours = st.slider("Hours per day:", min_value=4.0, max_value=12.0, value=8.0, step=0.5)
+# --------------------------------------------------
+# SIDEBAR
+# --------------------------------------------------
+with st.sidebar:
+    st.header("Trip Details")
 
-# Generate Button
-if st.button("Generate My Itinerary", type="primary"):
-    if not city:
-        st.warning("Please enter a city name.")
-    else:
-        with st.spinner(f"Using AI to rank the best places in {city}..."):
-            # Call your backend function
-            plan = build_itinerary(city, days, hours)
+    location = st.text_input("Destination (City / State):", "Goa")
+    days = st.number_input("Trip Duration (Days):", 1, 14, 3)
+    start_date = st.date_input("Trip Start Date:", date.today())
 
-            if "error" in plan:
-                st.error(plan["error"])
-            else:
-                st.success("Itinerary Generated Successfully!")
+    if st.button("Generate Smart Itinerary"):
 
-                # Display the plan beautifully
-                for day, places in plan.items():
-                    st.header(day)
+        transport, plan = build_pro_itinerary(
+            location,
+            days,
+            start_date
+        )
 
-                    if not places:
-                        st.info("Free time! Try increasing hours or choosing a city with more spots.")
-                        continue
+        if transport is None:
+            st.error(plan)
+            st.stop()
 
-                    for p in places:
-                        # Use expanders for a clean UI
-                        with st.expander(f"📍 {p['place_name']} ({p['visit_time']} hrs)"):
-                            st.write(f"⭐ **Rating:** {p['rating']} / 5.0")
-                            st.write(f"🤖 **AI Match Score:** {round(p.get('ml_score', 0), 3)}")
+        st.session_state.transport = transport
+        st.session_state.plan = plan
+        st.session_state.hotels = get_hotels(location)
+        st.session_state.ranked_places = get_ranked_places(location)
 
-                            # Clickable Map Link
-                            map_link = p.get('map_link', '#')
-                            if map_link != "No link available" and pd.notna(map_link):
-                                st.markdown(f"[🗺️ View on Google Maps]({map_link})")
-                            else:
-                                st.write("🗺️ Map link unavailable")
+# --------------------------------------------------
+# MAIN CONTENT
+# --------------------------------------------------
+if "transport" in st.session_state:
+
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["✈️ Arrival", "🏨 Hotels", "📅 Itinerary", "🏬 Markets"]
+    )
+
+    # --------------------------------------------------
+    # ARRIVAL TAB
+    # --------------------------------------------------
+    with tab1:
+        st.subheader("✈️ Arrival Information")
+
+        st.success(
+            f"✈️ Nearest Airport: {st.session_state.transport.get('airport')}"
+        )
+
+        st.success(
+            f"🚆 Major Railway Station: {st.session_state.transport.get('railway')}"
+        )
+    # --------------------------------------------------
+    # HOTELS TAB
+    # --------------------------------------------------
+    with tab2:
+        st.subheader("🏨 Recommended Hotels")
+
+        for hotel in st.session_state.hotels:
+            st.markdown(f"### {hotel['name']}")
+            st.write(f"⭐ Rating: {hotel['rating']}")
+            st.write(f"💰 Price: ₹{hotel['price']} per night")
+            st.divider()
+
+    # --------------------------------------------------
+    # ITINERARY TAB (CLEANED)
+    # --------------------------------------------------
+    with tab3:
+
+        for day_label, activities in st.session_state.plan.items():
+
+            st.markdown(f"## 📅 {day_label}")
+
+            for item in activities:
+
+                if isinstance(item, str):
+                    if "Estimated Cost" in item:
+                        st.warning(item)
+                    else:
+                        st.success(item)
+                    continue
+
+                with st.expander(
+                    f"📍 {item.get('place_name')} ({item.get('visit_time')} hrs)"
+                ):
+
+                    st.write(f"⭐ Rating: {item.get('rating')}")
+                    st.write(f"💰 Budget Level: {item.get('budget')}")
+                    st.write(f"🌃 Nightlife Score: {item.get('nightlife_score')}/10")
+
+                    if item.get("adventure_available") == "Yes":
+                        st.write(
+                            f"🌊 Adventure Base Price: ₹{item.get('adventure_price')}"
+                        )
+
+                    # ✅ MAP BUTTON (FROM DATASET)
+                    map_link = item.get("map_link")
+
+                    if map_link and str(map_link).strip():
+                        st.link_button(
+                            "🗺️ View on Google Maps",
+                            map_link,
+                            use_container_width=True
+                        )
+
+            st.divider()
+
+    # --------------------------------------------------
+    # MARKETS TAB (ONLY MARKETS + RESTAURANTS)
+    # --------------------------------------------------
+    with tab4:
+
+        st.subheader("🏬 Famous Markets & Restaurants")
+
+        all_markets = set()
+        all_restaurants = set()
+
+        for place in st.session_state.ranked_places:
+
+            if place.get("famous_market"):
+                for m in str(place.get("famous_market")).split(","):
+                    all_markets.add(m.strip())
+
+            if place.get("famous_restaurant"):
+                for r in str(place.get("famous_restaurant")).split(","):
+                    all_restaurants.add(r.strip())
+
+        # ---- MARKETS ----
+        if all_markets:
+            st.markdown("### 🏬 Top Markets")
+            for market in sorted(all_markets):
+                st.markdown(f"- {market}")
+        else:
+            st.info("No market data available.")
+
+        st.divider()
+
+        # ---- RESTAURANTS ----
+        if all_restaurants:
+            st.markdown("### 🍽️ Famous Restaurants")
+            for restaurant in sorted(all_restaurants):
+                st.markdown(f"- {restaurant}")
+        else:
+            st.info("No restaurant data available.")
+
+# --------------------------------------------------
+# FOOTER
+# --------------------------------------------------
+st.markdown("---")
+st.caption("Powered by AI Travel Researcher PRO")

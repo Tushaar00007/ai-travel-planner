@@ -1,59 +1,110 @@
-from predict import get_ranked_places
+from ML_model.src.predict import get_ranked_places, load_data
+from datetime import timedelta
 
 
-def build_itinerary(city: str, days: int, hours_per_day: float = 8.0):
-    """
-    Build a day-wise itinerary from ranked places.
+def get_season(date_obj):
 
-    city: city name (e.g., "Jaipur")
-    days: number of days (e.g., 2)
-    hours_per_day: max visiting hours per day
-    """
+    if date_obj.month in [11,12,1,2]:
+        return "peak"
 
-    ranked_places = get_ranked_places(city, top_k=30)
+    return "off"
+
+
+def seasonal_multiplier(season):
+
+    return 1.4 if season == "peak" else 1.0
+
+
+def build_pro_itinerary(location, days, start_date):
+
+    ranked_places = get_ranked_places(location)
 
     if not ranked_places:
-        return {"error": "No places found for this city"}
+        return None, "Location not found"
 
-    itinerary = {f"Day {i+1}": [] for i in range(days)}
+    df = load_data()
 
-    day_index = 0
-    remaining_hours = hours_per_day
+    location_clean = location.lower().strip()
 
-    for place in ranked_places:
-        visit_time = place.get("visit_time", 1.5)
+    transport_rows = df[
+        (df["city"].str.lower() == location_clean) |
+        (df["state"].str.lower() == location_clean)
+    ]
 
-        # If place fits in current day
-        if visit_time <= remaining_hours:
-            itinerary[f"Day {day_index+1}"].append(place)
-            remaining_hours -= visit_time
+    if transport_rows.empty:
 
-        else:
-            # Move to next day
-            day_index += 1
+        transport_rows = df[
+            df["city"].str.lower().str.contains(location_clean) |
+            df["state"].str.lower().str.contains(location_clean)
+        ]
 
-            if day_index >= days:
-                break
+    airport = (
+        transport_rows["airport"].dropna().iloc[0]
+        if not transport_rows["airport"].dropna().empty
+        else "Not Available"
+    )
 
-            remaining_hours = hours_per_day
-            itinerary[f"Day {day_index+1}"].append(place)
-            remaining_hours -= visit_time
+    railway = (
+        transport_rows["railway"].dropna().iloc[0]
+        if not transport_rows["railway"].dropna().empty
+        else "Not Available"
+    )
 
-    return itinerary
+    itinerary = {}
+    remaining_places = ranked_places.copy()
 
+    for d in range(days):
 
-if __name__ == "__main__":
-    city = "Jaipur"
-    days = 2
+        current_date = start_date + timedelta(days=d)
 
-    plan = build_itinerary(city, days)
+        season = get_season(current_date)
+        multiplier = seasonal_multiplier(season)
 
-    print(f"\nItinerary for {city} ({days} days):\n")
+        day_label = f"Day {d+1} / {current_date.strftime('%d-%m-%Y')}"
 
-    for day, places in plan.items():
-        print(day)
-        for p in places:
-            # Updated to include the Google Maps link
-            print(f"  - {p['place_name']} ({p['visit_time']} hrs)")
-            print(f"    Map: {p.get('map_link', 'No link available')}")
-        print()
+        day_plan = []
+
+        if d == 0:
+            day_plan.append(f"Arrival at {airport}")
+
+        remaining_hours = 8
+        selected = []
+
+        for place in list(remaining_places):
+
+            visit_time = float(place.get("visit_time", 2))
+
+            if visit_time <= remaining_hours:
+
+                selected.append(place)
+                remaining_hours -= visit_time
+                remaining_places.remove(place)
+
+        day_cost = 0
+
+        for p in selected:
+
+            fee = p.get("fee")
+
+            if str(fee).isdigit():
+                day_cost += int(fee)
+
+            if p.get("adventure_available") == "Yes":
+
+                base_price = float(p.get("adventure_price", 0))
+                day_cost += int(base_price * multiplier)
+
+        day_cost += 1500
+
+        day_plan.extend(selected)
+
+        day_plan.append(f"💰 Estimated Cost: ₹{int(day_cost)}")
+
+        itinerary[day_label] = day_plan
+
+    transport = {
+        "airport": airport,
+        "railway": railway
+    }
+
+    return transport, itinerary
