@@ -1,96 +1,134 @@
 import pandas as pd
 import numpy as np
-import joblib
-from pathlib import Path
-from xgboost import XGBRegressor
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+import joblib
+import os
+from pathlib import Path
 
+# Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-DATA_PATH = BASE_DIR / "dataset/cleaned_pan_india_tourism_dataset_updated.csv"
+DATA_PATH = BASE_DIR / "dataset/final_merged_tourism_dataset.csv"
 MODEL_PATH = BASE_DIR / "models/xgb_ranker.pkl"
 
-df = pd.read_csv(DATA_PATH)
+def train_model():
+    if not DATA_PATH.exists():
+        print(f"Error: Dataset not found at {DATA_PATH}")
+        return
 
-df = df.rename(columns={
-    "City": "city",
-    "State": "state",
-    "Name": "place_name",
-    "Type": "type",
-    "Google review rating": "rating",
-    "time needed to visit in hrs": "visit_time",
-    "Entrance Fee in INR": "fee",
-    "Budget Level": "budget",
-    "Nightlife Spot": "nightlife",
-    "Nightlife Score (0-10)": "nightlife_score",
-    "Is_Shopping": "is_shopping",
-    "Is_Beach": "is_beach",
-    "Adventure_Available": "adventure_available",
-    "Avg_Adventure_Base_Price": "adventure_price",
-    "Famous Market": "famous_market",
-    "Famous Restaurant": "famous_restaurant",
-    "Nearest Airport": "airport",
-    "Major Railway Station": "railway",
-    "Food Specialty": "food_specialty",
-    "Maps": "map_link"
-})
+    # Load the new dataset
+    df = pd.read_csv(DATA_PATH)
+    
+    # Strip any whitespace from column names just in case
+    df.columns = [c.strip() for c in df.columns]
 
-df["rating"] = df["rating"].fillna(df["rating"].mean())
-df["visit_time"] = df["visit_time"].fillna(df["visit_time"].median())
-df["adventure_price"] = df["adventure_price"].fillna(0)
-df["nightlife_score"] = df["nightlife_score"].fillna(0)
+    print(f"Loaded dataset with {len(df)} rows and {len(df.columns)} columns.")
 
-df["log_rating"] = np.log1p(df["rating"])
+    # 1. Feature Engineering (Requirement #2)
+    # log_rating = log1p(Google review rating)
+    df['log_rating'] = np.log1p(df['Google review rating'].fillna(0))
+    
+    # popularity_norm = Popularity Index / 100
+    df['popularity_norm'] = df['Popularity Index (0-100)'].fillna(0) / 100
+    
+    # tourism_score_norm = Tourism Score / 10
+    df['tourism_score_norm'] = df['Tourism Score (1-10)'].fillna(0) / 10
+    
+    # crowd_norm = Crowd_Level / 10
+    df['crowd_norm'] = df['Crowd_Level'].fillna(0) / 10
+    
+    # market_score = number of famous markets (assuming semicolon separated)
+    df['market_score'] = df['Famous Market'].apply(lambda x: len(str(x).split(';')) if pd.notnull(x) and str(x).strip() != "" else 0)
+    
+    # restaurant_score = number of famous restaurants (assuming semicolon separated)
+    df['restaurant_score'] = df['Famous Restaurant'].apply(lambda x: len(str(x).split(';')) if pd.notnull(x) and str(x).strip() != "" else 0)
 
-df["market_score"] = df["famous_market"].fillna("").apply(
-    lambda x: len(str(x).split(",")) if str(x).strip() else 0
-)
+    # 2. Update Target Score Logic (Requirement #3)
+    # target_score = (Google rating * 0.25) + (popularity_norm * 0.20) + (tourism_score_norm * 0.20) + 
+    #                (nightlife_score * 0.10) + (market_score * 0.10) + (crowd_norm * -0.05) + (log_rating * 0.10)
+    
+    df['rating'] = df['Google review rating'].fillna(0)
+    df['nightlife_score'] = df['Nightlife Score (0-10)'].fillna(0)
+    
+    df['target_score'] = (
+        (df['rating'] * 0.25) +
+        (df['popularity_norm'] * 0.20) +
+        (df['tourism_score_norm'] * 0.20) +
+        (df['nightlife_score'] * 0.10) +
+        (df['market_score'] * 0.10) +
+        (df['crowd_norm'] * -0.05) +
+        (df['log_rating'] * 0.10)
+    )
 
-encoders = {}
+    # 3. Encoding categorical features
+    le_city = LabelEncoder()
+    le_state = LabelEncoder()
+    le_type = LabelEncoder()
+    le_budget = LabelEncoder()
 
-for col in [
-    "city","state","type","budget",
-    "nightlife","is_shopping","is_beach","adventure_available"
-]:
-    le = LabelEncoder()
-    df[col+"_encoded"] = le.fit_transform(df[col].astype(str))
-    encoders[col] = le
+    df['city_encoded'] = le_city.fit_transform(df['City'].fillna('Unknown'))
+    df['state_encoded'] = le_state.fit_transform(df['State'].fillna('Unknown'))
+    df['type_encoded'] = le_type.fit_transform(df['Type'].fillna('Unknown'))
+    df['budget_encoded'] = le_budget.fit_transform(df['Budget Level'].fillna('Budget'))
 
-df["target_score"] = (
-    df["rating"] * 0.35 +
-    df["nightlife_score"] * 0.2 +
-    df["market_score"] * 0.15 +
-    df["log_rating"] * 0.15 +
-    (df["visit_time"] / df["visit_time"].max()) * 0.15
-)
+    # 4. Define ML Features (Requirement #4)
+    features = [
+        'city_encoded', 'state_encoded', 'type_encoded', 'budget_encoded',
+        'rating', 'time needed to visit in hrs', 'nightlife_score',
+        'popularity_norm', 'tourism_score_norm', 'crowd_norm',
+        'market_score', 'restaurant_score', 'Recommended_Duration_Min',
+        'Avg_Local_Transport_Cost'
+    ]
+    
+    # Fill remaining missing values in features
+    df['time needed to visit in hrs'] = df['time needed to visit in hrs'].fillna(2.0)
+    df['Recommended_Duration_Min'] = df['Recommended_Duration_Min'].fillna(1.0)
+    # Convert Avg_Local_Transport_Cost to numeric
+    def get_cost(val):
+        try:
+            if pd.isna(val): return 300
+            import re
+            nums = re.findall(r'\d+', str(val).replace(',', ''))
+            return int(nums[0]) if nums else 300
+        except:
+            return 300
 
-features = [
-    "city_encoded","state_encoded",
-    "type_encoded","budget_encoded",
-    "nightlife_encoded","is_shopping_encoded",
-    "is_beach_encoded","adventure_available_encoded",
-    "rating","nightlife_score","market_score","visit_time"
-]
+    df['Avg_Local_Transport_Cost'] = df['Avg_Local_Transport_Cost'].apply(get_cost)
 
-X = df[features]
-y = df["target_score"]
+    X = df[features]
+    y = df['target_score']
 
-model = XGBRegressor(
-    n_estimators=400,
-    max_depth=7,
-    learning_rate=0.04,
-    subsample=0.85,
-    random_state=42
-)
+    # Train/Test Split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-model.fit(X, y)
+    # XGBoost regression model
+    model = xgb.XGBRegressor(
+        n_estimators=1000,
+        learning_rate=0.05,
+        max_depth=6,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42
+    )
 
-MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    print("Training model...")
+    model.fit(X_train, y_train)
 
-joblib.dump({
-    "model": model,
-    "label_encoders": encoders,
-    "features": features
-}, MODEL_PATH)
+    # Save model and encoders
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    bundle = {
+        'model': model,
+        'le_city': le_city,
+        'le_state': le_state,
+        'le_type': le_type,
+        'le_budget': le_budget,
+        'features': features
+    }
+    joblib.dump(bundle, MODEL_PATH)
 
-print("Model saved successfully.")
+    print(f"Model saved to {MODEL_PATH}")
+    print(f"Final training R^2 score: {model.score(X_train, y_train):.4f}")
+
+if __name__ == "__main__":
+    train_model()
