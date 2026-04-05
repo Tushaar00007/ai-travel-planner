@@ -1,0 +1,12 @@
+venv/
+.env
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.git/
+.idea/
+.DS_Store
+server.log
+tests/
+Dockerfile
+docker-compose.yml

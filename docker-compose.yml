@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  ml-backend:
+    build: .
+    container_name: ml-travel-api
+    ports:
+      - "9000:9000"
+    env_file:
+      - .env
+    volumes:
+      # Optional: Mount the dataset if it's updated frequently
+      # - ./dataset:/app/dataset
+      # - ./models:/app/models
+      # Keep logs for debugging
+      - ./server.log:/app/server.log
+    restart: unless-stopped
