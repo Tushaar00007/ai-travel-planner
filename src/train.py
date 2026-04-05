@@ -9,7 +9,7 @@ from pathlib import Path
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_PATH = BASE_DIR / "dataset/final_merged_tourism_dataset.csv"
+DATA_PATH = BASE_DIR / "dataset/tourism_dataset_enriched_v3.csv"
 MODEL_PATH = BASE_DIR / "models/xgb_ranker.pkl"
 
 def train_model():
@@ -44,6 +44,9 @@ def train_model():
     # restaurant_score = number of famous restaurants (assuming semicolon separated)
     df['restaurant_score'] = df['Famous Restaurant'].apply(lambda x: len(str(x).split(';')) if pd.notnull(x) and str(x).strip() != "" else 0)
 
+    # preference_count = number of comma-separated values in the Trip_Preference_Tags column
+    df['preference_count'] = df['Trip_Preference_Tags'].apply(lambda x: len(str(x).split(',')) if pd.notnull(x) else 1)
+
     # 2. Update Target Score Logic (Requirement #3)
     # target_score = (Google rating * 0.25) + (popularity_norm * 0.20) + (tourism_score_norm * 0.20) + 
     #                (nightlife_score * 0.10) + (market_score * 0.10) + (crowd_norm * -0.05) + (log_rating * 0.10)
@@ -77,7 +80,7 @@ def train_model():
         'city_encoded', 'state_encoded', 'type_encoded', 'budget_encoded',
         'rating', 'time needed to visit in hrs', 'nightlife_score',
         'popularity_norm', 'tourism_score_norm', 'crowd_norm',
-        'market_score', 'restaurant_score', 'Recommended_Duration_Min',
+        'market_score', 'restaurant_score', 'preference_count', 'Recommended_Duration_Min',
         'Avg_Local_Transport_Cost'
     ]
     

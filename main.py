@@ -7,6 +7,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 
+from fastapi.middleware.cors import CORSMiddleware
+
 # Ensure the src directory is in the path
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
@@ -21,12 +23,23 @@ app = FastAPI(
     version="1.1.0"
 )
 
+# Add CORS Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins (for development)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 class ItineraryRequest(BaseModel):
     location: str
     days: int
     start_date: date
+    preferences: Optional[dict] = None
 
-@app.post("/generate_itinerary")
+@app.post("/ml/generate")
+@app.post("/generate_itinerary")  # Keep legacy route for compatibility
 def generate_itinerary(req: ItineraryRequest):
     """
     Generate an itinerary, get hotel recommendations and ranked places based on the location.
@@ -35,7 +48,7 @@ def generate_itinerary(req: ItineraryRequest):
     try:
         # 1. Get Ranked Places from ML Model
         # Returns top 25 places with detailed fields
-        ranked_places = get_ranked_places(req.location, req.start_date)
+        ranked_places = get_ranked_places(req.location, req.start_date, preferences=req.preferences)
         
         if not ranked_places:
             return {"success": False, "message": "No places found for this location."}
@@ -50,7 +63,8 @@ def generate_itinerary(req: ItineraryRequest):
         )
 
         # 3. Get Hotel Recommendations
-        hotels = get_hotels(req.location)
+        budget_level = req.preferences.get("budget", "Mid-Range") if req.preferences else "Mid-Range"
+        hotels = get_hotels(req.location, budget_level)
 
         # 4. Generate AI Travel Summary
         # Collect top types for a natural summary
@@ -76,24 +90,26 @@ def generate_itinerary(req: ItineraryRequest):
         print(f"Error in generate_itinerary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/download_pdf")
+@app.post("/ml/download_pdf")
+@app.post("/download_pdf")  # Keep legacy route for compatibility
 async def download_pdf(req: ItineraryRequest):
     """
     Generate and download a professional itinerary PDF.
     """
     try:
         # 1. Get Data
-        ranked_places = get_ranked_places(req.location, req.start_date)
+        ranked_places = get_ranked_places(req.location, req.start_date, preferences=req.preferences)
         if not ranked_places:
             raise HTTPException(status_code=404, detail="No places found for this location.")
 
         itinerary_data = build_pro_itinerary(
-            req.location, 
-            req.days, 
-            ranked_places, 
+            req.location,
+            req.days,
+            ranked_places,
             req.start_date
         )
-        hotels = get_hotels(req.location)
+        budget_level = req.preferences.get("budget", "Mid-Range") if req.preferences else "Mid-Range"
+        hotels = get_hotels(req.location, budget_level)
 
         # 2. Generate PDF
         pdf_buffer = generate_itinerary_pdf(

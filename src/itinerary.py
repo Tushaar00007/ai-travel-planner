@@ -41,6 +41,12 @@ def build_pro_itinerary(location, days, ranked_places, start_date=None):
         if display_h == 0: display_h = 12
         return f"{display_h}:{m:02d} {suffix}"
 
+    def _fare_str(base, per_km):
+        b, p = str(base).strip(), str(per_km).strip()
+        if b in ("NA", "N/A", "Not Available", "nan") or p in ("NA", "N/A", "Not Available", "nan"):
+            return "Not Available"
+        return f"{base} base | {per_km}/km"
+
     for d in range(1, days + 1):
         day_date = ""
         if start_date:
@@ -75,7 +81,8 @@ def build_pro_itinerary(location, days, ranked_places, start_date=None):
             found_p = None
             # Matching logic
             for p in candidates[:10]:
-                if str(p.get('time_slot', '')).strip() == slot['name']:
+                target_slot = str(p.get('itinerary_role', p.get('time_slot', ''))).strip()
+                if target_slot == slot['name']:
                     found_p = p
                     break
             
@@ -110,7 +117,25 @@ def build_pro_itinerary(location, days, ranked_places, start_date=None):
                     "avg_local_transport_cost": found_p.get('avg_local_transport_cost', 300),
                     "entrance_fee": found_p.get('entrance_fee', 0),
                     "packing_suggestions": found_p.get('packing_suggestions', ''),
-                    "short_description": found_p.get('short_description', '')
+                    "short_description": found_p.get('short_description', ''),
+                    "transport_fares": {
+                        "auto": f"{found_p.get('auto_fare_min', 'N/A')} min | {found_p.get('auto_fare_per_km', 'N/A')}/km",
+                        "rapido_bike": f"{found_p.get('rapido_bike_min', 'N/A')} min | {found_p.get('rapido_bike_per_km', 'N/A')}/km",
+                        "ola_car": _fare_str(found_p.get('ola_car_base', 'N/A'), found_p.get('ola_car_per_km', 'N/A')),
+                        "uber_car": _fare_str(found_p.get('uber_car_base', 'N/A'), found_p.get('uber_car_per_km', 'N/A')),
+                        "city_taxi": found_p.get('city_taxi_per_km', 'N/A'),
+                        "surge_note": found_p.get('surge_pricing_note', 'N/A')
+                    },
+                    "nightlife_info": {
+                        "venue_type": found_p.get('venue_type', 'N/A'),
+                        "cover_charge": found_p.get('cover_charge', 'N/A'),
+                        "avg_drinks_price": found_p.get('avg_drinks_price', 'N/A'),
+                        "music_genre": found_p.get('music_genre', 'N/A'),
+                        "club_timings": found_p.get('club_timings', 'N/A'),
+                        "dress_code": found_p.get('dress_code', 'N/A'),
+                        "ladies_night": found_p.get('ladies_night_info', 'N/A'),
+                        "note": found_p.get('nightlife_note', 'N/A')
+                    } if found_p.get('cover_charge', 'N/A') != 'N/A' else None
                 }
                 day_events.append(event)
                 places_added_today += 1

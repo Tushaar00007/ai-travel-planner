@@ -1,12 +1,20 @@
 import pandas as pd
 import numpy as np
 import joblib
+import os
+import requests as http_requests
 from pathlib import Path
+from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+load_dotenv()
+GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
+_photo_cache = {}  # module-level cache to avoid repeat API calls
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_PATH = BASE_DIR / "models/xgb_ranker.pkl"
-DATA_PATH = BASE_DIR / "dataset/final_merged_tourism_dataset.csv"
+DATA_PATH = BASE_DIR / "dataset/tourism_dataset_enriched_v3.csv"
 
 # Load Model Bundle
 def load_bundle():
@@ -23,17 +31,72 @@ def load_data():
     df.columns = [c.strip() for c in df.columns]
     return df
 
-def get_ranked_places(location_query, start_date=None):
+
+def fetch_google_photo_url(place_name, city):
+    """Fetch a Google Places photo URL for the given place. Results are cached."""
+    cache_key = f"{place_name}_{city}"
+    if cache_key in _photo_cache:
+        return _photo_cache[cache_key]
+
+    if not GOOGLE_PLACES_API_KEY:
+        return ""
+
+    try:
+        search_url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
+        params = {
+            "input": f"{place_name} {city} India",
+            "inputtype": "textquery",
+            "fields": "photos",
+            "key": GOOGLE_PLACES_API_KEY
+        }
+        res = http_requests.get(search_url, params=params, timeout=3)
+        data = res.json()
+
+        candidates = data.get("candidates", [])
+        if candidates and candidates[0].get("photos"):
+            photo_ref = candidates[0]["photos"][0]["photo_reference"]
+            photo_url = (
+                f"https://maps.googleapis.com/maps/api/place/photo"
+                f"?maxwidth=800&photoreference={photo_ref}"
+                f"&key={GOOGLE_PLACES_API_KEY}"
+            )
+            _photo_cache[cache_key] = photo_url
+            return photo_url
+    except Exception as e:
+        print(f"[predict.py] Google photo fetch failed for {place_name}: {e}")
+
+    _photo_cache[cache_key] = ""
+    return ""
+
+def get_ranked_places(location_query, start_date=None, preferences=None):
     df = load_data()
     if df.empty or bundle is None:
         return []
 
     # Filter by City OR State (Requirement #5)
-    location_query = str(location_query).lower().strip()
-    mask = (df['City'].str.lower().str.contains(location_query, na=False)) | \
-           (df['State'].str.lower().str.contains(location_query, na=False))
+    location_parts = [p.strip().lower() for p in str(location_query).split(',')]
+    generic_terms = {'india'}
+    query_parts = [p for p in location_parts if p and p not in generic_terms]
+    
+    if not query_parts:
+        return []
+
+    mask = pd.Series(False, index=df.index)
+    for part in query_parts:
+        mask |= (df['City'].str.lower().str.contains(part, na=False)) | \
+               (df['State'].str.lower().str.contains(part, na=False))
     
     filtered_df = df[mask].copy()
+
+    # Detect rows where Ola/Uber is not available (string "NA" in dataset)
+    OLA_UBER_COLS = [
+        "Ola_Car_Base", "Ola_Car_PerKm",
+        "Uber_Car_Base", "Uber_Car_PerKm",
+        "Uber_Auto_Min", "Uber_Auto_PerKm"
+    ]
+    no_ola_uber_mask = filtered_df[OLA_UBER_COLS].apply(
+        lambda col: col.astype(str).str.strip() == "NA"
+    ).any(axis=1)
 
     if filtered_df.empty:
         return []
@@ -52,6 +115,9 @@ def get_ranked_places(location_query, start_date=None):
     # Extract list counts (market/rest)
     filtered_df['market_score'] = filtered_df['Famous Market'].apply(lambda x: len(str(x).split(';')) if pd.notnull(x) and str(x).strip() != "" else 0)
     filtered_df['restaurant_score'] = filtered_df['Famous Restaurant'].apply(lambda x: len(str(x).split(';')) if pd.notnull(x) and str(x).strip() != "" else 0)
+    
+    # preference_count = number of comma-separated values in the Trip_Preference_Tags column
+    filtered_df['preference_count'] = filtered_df['Trip_Preference_Tags'].apply(lambda x: len(str(x).split(',')) if pd.notnull(x) else 1)
     
     # Handling Categorical Encoding
     # We use the encoders from the training bundle. Handle unseen labels gracefully.
@@ -81,6 +147,55 @@ def get_ranked_places(location_query, start_date=None):
     # Predict ML scores
     X = filtered_df[features]
     filtered_df['ml_score'] = model.predict(X)
+
+    # Soft preference boosting — uses score multipliers, never removes rows,
+    # so we always return results even when preferences don't match perfectly.
+    if preferences:
+        style = preferences.get("style", "")
+        pref_list = []
+        if style and style.lower() not in ["any", "all", ""]:
+            pref_list.append(style)
+        if preferences.get("includeNightlife") == True:
+            pref_list.append("Nightlife")
+        if preferences.get("includeFood") == True:
+            pref_list.append("Foodie")
+
+        # avoidCrowds: penalise high-crowd places instead of removing them
+        if preferences.get("avoidCrowds") == True:
+            filtered_df['ml_score'] = filtered_df.apply(
+                lambda row: row['ml_score'] * 0.5
+                if pd.notna(row['Crowd_Level']) and row['Crowd_Level'] > 6
+                else row['ml_score'],
+                axis=1
+            )
+
+        # Style / nightlife / food: boost matching places 1.5×
+        if pref_list:
+            pref_mask = filtered_df['Trip_Preference_Tags'].apply(
+                lambda x: any(p.strip().lower() in str(x).lower() for p in pref_list)
+            )
+            filtered_df['ml_score'] = filtered_df.apply(
+                lambda row: row['ml_score'] * 1.5
+                if pref_mask[row.name] else row['ml_score'],
+                axis=1
+            )
+
+        # Budget: boost places matching the chosen budget tier 1.3×
+        budget = preferences.get("budget", "")
+        if budget:
+            budget_map = {
+                "budget": ["Low", "Budget"],
+                "mid": ["Mid-Range", "Medium"],
+                "luxury": ["High", "Luxury"]
+            }
+            for key, values in budget_map.items():
+                if key in budget.lower():
+                    budget_mask = filtered_df['Budget Level'].isin(values)
+                    filtered_df['ml_score'] = filtered_df.apply(
+                        lambda row: row['ml_score'] * 1.3
+                        if budget_mask[row.name] else row['ml_score'],
+                        axis=1
+                    )
 
     # Seasonal Awareness (Optional logic from previous turns if desired, though not in latest reqs)
     if start_date:
@@ -143,8 +258,35 @@ def get_ranked_places(location_query, start_date=None):
         "Place_Description_AI": "",
         "Common_Questions": "",
         "Nearest Airport": "Not Available",
-        "Major Railway Station": "Not Available"
+        "Major Railway Station": "Not Available",
+        "Auto_Fare_Min": "N/A",
+        "Auto_Fare_PerKm": "N/A",
+        "Rapido_Bike_Min": "N/A",
+        "Rapido_Bike_PerKm": "N/A",
+
+        "City_Taxi_PerKm": "N/A",
+        "Transport_Fare_Note": "N/A",
+        "Surge_Pricing_Note": "N/A",
+        "Venue_Type": "N/A",
+        "Cover_Charge": "N/A",
+        "Avg_Drinks_Price": "N/A",
+        "Music_Genre": "N/A",
+        "Club_Timings": "N/A",
+        "Dress_Code": "N/A",
+        "Ladies_Night_Info": "N/A",
+        "Nightlife_Note": "N/A",
+        "Itinerary_Role": "N/A"
     })
+
+    # Separately fill NaN (not string "NA") in Ola/Uber cols so JSON serialization won't break
+    for col in OLA_UBER_COLS:
+        if col in ranked.columns:
+            ranked[col] = ranked[col].fillna("N/A")
+
+    # Helper: convert dataset "NA" or fallback "N/A" strings to user-friendly label
+    def fmt_ola_uber(val):
+        v = str(val).strip()
+        return "Not Available" if v in ("NA", "N/A", "nan") else val
 
     # Format output fields (Requirement #5)
     results = []
@@ -184,7 +326,55 @@ def get_ranked_places(location_query, start_date=None):
             "place_description_ai": row["Place_Description_AI"],
             "common_questions": row["Common_Questions"],
             "airport": row["Nearest Airport"],
-            "railway": row["Major Railway Station"]
+            "railway": row["Major Railway Station"],
+            "itinerary_role": row["Itinerary_Role"],
+            "auto_fare_min": row["Auto_Fare_Min"],
+            "auto_fare_per_km": row["Auto_Fare_PerKm"],
+            "rapido_bike_min": row["Rapido_Bike_Min"],
+            "rapido_bike_per_km": row["Rapido_Bike_PerKm"],
+            "ola_car_base": fmt_ola_uber(row["Ola_Car_Base"]),
+            "ola_car_per_km": fmt_ola_uber(row["Ola_Car_PerKm"]),
+            "uber_car_base": fmt_ola_uber(row["Uber_Car_Base"]),
+            "uber_car_per_km": fmt_ola_uber(row["Uber_Car_PerKm"]),
+            "uber_auto_min": fmt_ola_uber(row["Uber_Auto_Min"]),
+            "uber_auto_per_km": fmt_ola_uber(row["Uber_Auto_PerKm"]),
+            "city_taxi_per_km": row["City_Taxi_PerKm"],
+            "surge_pricing_note": row["Surge_Pricing_Note"],
+            "transport_fare_note": row["Transport_Fare_Note"],
+            "venue_type": row["Venue_Type"],
+            "cover_charge": row["Cover_Charge"],
+            "avg_drinks_price": row["Avg_Drinks_Price"],
+            "music_genre": row["Music_Genre"],
+            "club_timings": row["Club_Timings"],
+            "dress_code": row["Dress_Code"],
+            "ladies_night_info": row["Ladies_Night_Info"],
+            "nightlife_note": row["Nightlife_Note"],
+            "photo_url": ""  # placeholder, filled in parallel below
         })
     
+    # Fetch Google Photos in parallel (non-blocking batch)
+    if results and GOOGLE_PLACES_API_KEY:
+        def _fetch_photo(idx, place_name, city):
+            return idx, fetch_google_photo_url(place_name, city)
+        
+        try:
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = [
+                    executor.submit(_fetch_photo, i, r["place_name"], r["city"])
+                    for i, r in enumerate(results)
+                ]
+                for future in as_completed(futures):
+                    try:
+                        idx, url = future.result(timeout=10)
+                        results[idx]["photo_url"] = url
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[predict.py] Parallel photo fetch failed: {e}")
+
+    if results:
+        print(f"[predict.py] Returning {len(results)} places for '{location_query}'")
+        print(f"[predict.py] First result keys: {list(results[0].keys())}")
+        print(f"[predict.py] Sample transport fares — auto_fare_min: {results[0].get('auto_fare_min')!r}, surge_pricing_note: {results[0].get('surge_pricing_note')!r}")
+
     return results

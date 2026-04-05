@@ -5,7 +5,7 @@ from datetime import date
 def test_generate_itinerary():
     url = "http://localhost:9000/generate_itinerary"
     payload = {
-        "location": "Goa",
+        "location": "Goa, India",
         "days": 2,
         "start_date": str(date.today())
     }
