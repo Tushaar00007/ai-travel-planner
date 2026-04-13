@@ -1,0 +1,16 @@
+INFO:     Started server process [34820]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:9000 (Press CTRL+C to quit)
+[predict.py] Returning 25 places for 'Goa, India'
+[predict.py] First result keys: ['place_name', 'city', 'state', 'type', 'rating', 'visit_time', 'latitude', 'longitude', 'map_link', 'place_image_url', 'short_description', 'significance', 'travel_tip', 'must_try_food', 'food_specialty', 'famous_market', 'famous_restaurant', 'crowd_level', 'best_visit_time', 'peak_hours', 'packing_suggestions', 'local_transport_options', 'nearest_metro_station', 'avg_local_transport_cost', 'ml_score', 'recommended_duration_min', 'recommended_duration_max', 'day_priority', 'time_slot', 'entrance_fee', 'adventure_price', 'place_description_ai', 'common_questions', 'airport', 'railway', 'itinerary_role', 'auto_fare_min', 'auto_fare_per_km', 'rapido_bike_min', 'rapido_bike_per_km', 'ola_car_base', 'ola_car_per_km', 'uber_car_base', 'uber_car_per_km', 'uber_auto_min', 'uber_auto_per_km', 'city_taxi_per_km', 'surge_pricing_note', 'transport_fare_note', 'venue_type', 'cover_charge', 'avg_drinks_price', 'music_genre', 'club_timings', 'dress_code', 'ladies_night_info', 'nightlife_note', 'photo_url']
+[predict.py] Sample transport fares — auto_fare_min: '₹25', surge_pricing_note: 'Peak hours (8-10AM, 5-9PM): up to 2x base. Off-peak: 50% minimum applies. Source: MoRTH 2025 guidelines'
+INFO:     127.0.0.1:62249 - "POST /generate_itinerary HTTP/1.1" 200 OK
+[predict.py] Returning 25 places for 'Goa, India'
+[predict.py] First result keys: ['place_name', 'city', 'state', 'type', 'rating', 'visit_time', 'latitude', 'longitude', 'map_link', 'place_image_url', 'short_description', 'significance', 'travel_tip', 'must_try_food', 'food_specialty', 'famous_market', 'famous_restaurant', 'crowd_level', 'best_visit_time', 'peak_hours', 'packing_suggestions', 'local_transport_options', 'nearest_metro_station', 'avg_local_transport_cost', 'ml_score', 'recommended_duration_min', 'recommended_duration_max', 'day_priority', 'time_slot', 'entrance_fee', 'adventure_price', 'place_description_ai', 'common_questions', 'airport', 'railway', 'itinerary_role', 'auto_fare_min', 'auto_fare_per_km', 'rapido_bike_min', 'rapido_bike_per_km', 'ola_car_base', 'ola_car_per_km', 'uber_car_base', 'uber_car_per_km', 'uber_auto_min', 'uber_auto_per_km', 'city_taxi_per_km', 'surge_pricing_note', 'transport_fare_note', 'venue_type', 'cover_charge', 'avg_drinks_price', 'music_genre', 'club_timings', 'dress_code', 'ladies_night_info', 'nightlife_note', 'photo_url']
+[predict.py] Sample transport fares — auto_fare_min: '₹25', surge_pricing_note: 'Peak hours (8-10AM, 5-9PM): up to 2x base. Off-peak: 50% minimum applies. Source: MoRTH 2025 guidelines'
+INFO:     127.0.0.1:60963 - "POST /generate_itinerary HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [34820]
