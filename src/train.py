@@ -9,7 +9,7 @@ from pathlib import Path
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_PATH = BASE_DIR / "dataset/tourism_dataset_enriched_v3.csv"
+DATA_PATH = BASE_DIR / "dataset/tourism_dataset_enriched_v4.csv"
 MODEL_PATH = BASE_DIR / "models/xgb_ranker.pkl"
 
 def train_model():

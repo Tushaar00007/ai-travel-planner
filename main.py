@@ -59,7 +59,8 @@ def generate_itinerary(req: ItineraryRequest):
             req.location, 
             req.days, 
             ranked_places, 
-            req.start_date
+            req.start_date,
+            preferences=req.preferences
         )
 
         # 3. Get Hotel Recommendations
@@ -106,7 +107,8 @@ async def download_pdf(req: ItineraryRequest):
             req.location,
             req.days,
             ranked_places,
-            req.start_date
+            req.start_date,
+            preferences=req.preferences
         )
         budget_level = req.preferences.get("budget", "Mid-Range") if req.preferences else "Mid-Range"
         hotels = get_hotels(req.location, budget_level)
